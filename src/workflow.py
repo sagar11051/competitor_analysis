@@ -1,154 +1,153 @@
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langgraph.graph import StateGraph , END
-from .models import CompanyAnalysis , CompanyInfo, ResearchState
-from .prompts import DeveloperToolsPrompts
-from .firecrawl import FirecrawlService
+from langgraph.graph import StateGraph, END
+from .models import CompanyProfile, CompetitorProfile, CompetitorAnalysis, StrategicInsight, AgentState
+from .prompts import CompetitiveIntelligencePrompts
+from .firecrawl_service import FirecrawlService
 from dotenv import load_dotenv
-from typing import Dict , Any
-import os
 from langchain_core.messages import HumanMessage, SystemMessage
+import os
+import json
+from typing import List, Dict, Any
+import re
 
 load_dotenv()
 key = os.getenv("GEMINI_API_KEY")
 
+# Node: Company Analysis
+def company_analysis_step(state: AgentState) -> AgentState:
+    firecrawl = FirecrawlService()
+    llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", api_key=key)
+    prompts = CompetitiveIntelligencePrompts()
+    scraped_content = firecrawl.scrape_company_website(state.company_url)
+    if not scraped_content:
+        print("Failed to scrape company website.")
+        return state
+    messages = [
+        {"role": "system", "content": prompts.COMPANY_ANALYSIS_SYSTEM},
+        {"role": "user", "content": prompts.company_analysis_user(scraped_content)}
+    ]
+    try:
+        response = llm.invoke(messages)
+        cleaned_response = re.sub(r"^```json\s*|```$", "", response.content.strip(), flags=re.MULTILINE)
+        company_profile = CompanyProfile(**json.loads(cleaned_response))
+        state.company_profile = company_profile
+    except Exception as e:
+        print("Company analysis failed:", e)
+    return state
+
+# Node: Competitor Search
+def competitor_search_step(state: AgentState) -> AgentState:
+    import ast
+    firecrawl = FirecrawlService()
+    llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", api_key=key)
+    prompts = CompetitiveIntelligencePrompts()
+    if not state.company_profile:
+        print("No company profile for competitor search.")
+        return state
+    search_results = firecrawl.search_competitors(state.company_profile.model_dump())
+    candidates = json.dumps(search_results)
+    kk = ast.literal_eval(candidates)
+    candidates= ""
+    for comp in kk:
+        candidates += f"name: {comp["title"]}\n website: {comp["url"]}\n description:{comp["description"]}"
+    messages = [
+        {"role": "system", "content": prompts.COMPETITOR_SEARCH_SYSTEM},
+        {"role": "user", "content": prompts.competitor_search_user(state.company_profile.model_dump_json(), candidates)}
+    ]
+    try:
+        response = llm.invoke(messages)
+        cleaned_response2 = re.sub(r"^```json\s*|```$", "", response.content.strip(), flags=re.MULTILINE)
+        competitors = []
+        for c in json.loads(cleaned_response2):
+            if c["website"] is None:
+                c["website"] = ""
+            competitors.append(CompetitorProfile(**c))
+        state.competitors = competitors
+    except Exception as e:
+        print("Competitor search failed:", e)
+    return state
+
+# Node: Competitor Analysis (top 3)
+def competitor_analysis_step(state: AgentState) -> AgentState:
+    firecrawl = FirecrawlService()
+    llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", api_key=key)
+    prompts = CompetitiveIntelligencePrompts()
+    competitor_analyses = []
+    for competitor in state.competitors[:3]:
+        comp_content = firecrawl.scrape_competitor_website(competitor.website)
+        def chunk_text_with_overlap(text, chunk_size=15000, overlap=2000):
+            chunks = []
+            i = 0
+            while i < len(text):
+                chunks.append(text[i:i+chunk_size])
+                i += chunk_size - overlap
+            return chunks
+        def analyze_chunk(chunk, idx, total):
+            # Replace with your LLM call
+            messages = [
+                    {"role": "system", "content": "You area helpful AI assistant help user to summarize the company analysis content below without loosing key informations like business model target market some informations about tech stack team size and any other relevent information"},
+                    {"role": "user", "content": f"This is part {idx+1} of {total} of a website. Analyze and summarize the following content:{chunk}"}
+                ]
+            response = llm.invoke(messages)
+            return f"Summary for chunk {idx+1}: {response}..."
+        # Step 1: Chunk with overlap
+        chunks = chunk_text_with_overlap(comp_content)
+        summaries = [analyze_chunk(chunk, idx, len(chunks)) for idx, chunk in enumerate(chunks)]
+        final_content = "\n\n".join(summaries)
+        if not comp_content:
+            continue
+        messages = [
+            {"role": "system", "content": prompts.COMPETITOR_ANALYSIS_SYSTEM},
+            {"role": "user", "content": prompts.competitor_analysis_user(final_content)}
+        ]
+        try:
+            response = llm.invoke(messages)
+            cleaned_response = re.sub(r"^```json\s*|```$", "", response.content.strip(), flags=re.MULTILINE)
+            analysis = CompetitorAnalysis(**json.loads(cleaned_response))
+            competitor_analyses.append(analysis)
+        except Exception as e:
+            print(f"Competitor analysis failed for {competitor.name}:", e)
+            continue
+    state.competitor_analyses = competitor_analyses
+    return state
+
+# Node: Insight Generation
+def insight_generation_step(state: AgentState) -> AgentState:
+    llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", api_key=key)
+    prompts = CompetitiveIntelligencePrompts()
+
+    try:
+        messages = [
+            {"role": "system", "content": prompts.INSIGHT_GENERATION_SYSTEM},
+            {"role": "user", "content": prompts.insight_generation_user(
+                state.company_profile.json() if state.company_profile else '{}',
+                json.dumps([c.model_dump() for c in state.competitors]),
+                json.dumps([a.model_dump() for a in state.competitor_analyses])
+            )}
+        ]
+        response = llm.invoke(messages)
+        cleaned = re.sub(r"^```json\s*|```$", "", response.content.strip(), flags=re.MULTILINE)
+        state.strategic_insights = StrategicInsight(**json.loads(cleaned))
+    except Exception as e:
+        print("Insight generation failed:", e)
+    return state
 
 class Workflow:
     def __init__(self):
-        self.firecrawl = FirecrawlService()
-        self.llm = ChatGoogleGenerativeAI(model = "gemini-1.5-flash",api_key = key)
-        self.prompts = DeveloperToolsPrompts()
-        self.workflow = self._build_workflow()
+        # Build the workflow graph
+        graph = StateGraph(AgentState)
+        graph.add_node("company_analysis", company_analysis_step)
+        graph.add_node("competitor_search", competitor_search_step)
+        graph.add_node("competitor_analysis", competitor_analysis_step)
+        graph.add_node("insight_generation", insight_generation_step)
+        graph.set_entry_point("company_analysis")
+        graph.add_edge("company_analysis", "competitor_search")
+        graph.add_edge("competitor_search", "competitor_analysis")
+        graph.add_edge("competitor_analysis", "insight_generation")
+        graph.add_edge("insight_generation", END)
+        self.workflow = graph.compile()
 
-    def _build_workflow(self):
-        graph = StateGraph(ResearchState)
-        graph.add_node("extract_tools", self._extract_tools_step)
-        graph.add_node("research", self._research_step)
-        graph.add_node("analyze", self._analyze_step)
-        graph.set_entry_point("extract_tools")
-        graph.add_edge("extract_tools", "research")
-        graph.add_edge("research", "analyze")
-        graph.add_edge("analyze", END)
-        return graph.compile()
-
-    def _extract_tools_step(self, state: ResearchState) -> Dict[str, Any]:
-        print(f"🔍 Finding articles about: {state.query}")
-
-        article_query = f"{state.query} tools comparison best alternatives"
-        search_results = self.firecrawl.search_companies(article_query, num_results=3)
-
-        all_content = ""
-        for result in search_results.data:
-            url = result.get("url", "")
-            scraped = self.firecrawl.scrape_company_pages(url)
-            if scraped:
-                all_content + scraped.markdown[:1500] + "\n\n"
-
-        messages = [
-            SystemMessage(content=self.prompts.TOOL_EXTRACTION_SYSTEM),
-            HumanMessage(content=self.prompts.tool_extraction_user(state.query, all_content))
-        ]
-
-        try:
-            response = self.llm.invoke(messages)
-            tool_names = [
-                name.strip()
-                for name in response.content.strip().split("\n")
-                if name.strip()
-            ]
-            print(f"Extracted tools: {', '.join(tool_names[:5])}")
-            return {"extracted_tools": tool_names}
-        except Exception as e:
-            print(e)
-            return {"extracted_tools": []}
-
-    def _analyze_company_content(self, company_name: str, content: str) -> CompanyAnalysis:
-        structured_llm = self.llm.with_structured_output(CompanyAnalysis)
-
-        messages = [
-            SystemMessage(content=self.prompts.TOOL_ANALYSIS_SYSTEM),
-            HumanMessage(content=self.prompts.tool_analysis_user(company_name, content))
-        ]
-
-        try:
-            analysis = structured_llm.invoke(messages)
-            return analysis
-        except Exception as e:
-            print(e)
-            return CompanyAnalysis(
-                pricing_model="Unknown",
-                is_open_source=None,
-                tech_stack=[],
-                description="Failed",
-                api_available=None,
-                language_support=[],
-                integration_capabilities=[],
-            )
-
-
-    def _research_step(self, state: ResearchState) -> Dict[str, Any]:
-        extracted_tools = getattr(state, "extracted_tools", [])
-
-        if not extracted_tools:
-            print("⚠️ No extracted tools found, falling back to direct search")
-            search_results = self.firecrawl.search_companies(state.query, num_results=4)
-            tool_names = [
-                result.get("metadata", {}).get("title", "Unknown")
-                for result in search_results.data
-            ]
-        else:
-            tool_names = extracted_tools[:4]
-
-        print(f"🔬 Researching specific tools: {', '.join(tool_names)}")
-
-        companies = []
-        for tool_name in tool_names:
-            tool_search_results = self.firecrawl.search_companies(tool_name + " official site", num_results=1)
-
-            if tool_search_results:
-                result = tool_search_results.data[0]
-                url = result.get("url", "")
-
-                company = CompanyInfo(
-                    name=tool_name,
-                    description=result.get("markdown", ""),
-                    website=url,
-                    tech_stack=[],
-                    competitors=[]
-                )
-
-                scraped = self.firecrawl.scrape_company_pages(url)
-                if scraped:
-                    content = scraped.markdown
-                    analysis = self._analyze_company_content(company.name, content)
-
-                    company.pricing_model = analysis.pricing_model
-                    company.is_open_source = analysis.is_open_source
-                    company.tech_stack = analysis.tech_stack
-                    company.description = analysis.description
-                    company.api_available = analysis.api_available
-                    company.language_support = analysis.language_support
-                    company.integration_capabilities = analysis.integration_capabilities
-
-                companies.append(company)
-
-        return {"companies": companies}
-
-    def _analyze_step(self, state: ResearchState) -> Dict[str, Any]:
-        print("Generating recommendations")
-
-        company_data = ", ".join([
-            company.json() for company in state.companies
-        ])
-
-        messages = [
-            SystemMessage(content=self.prompts.RECOMMENDATIONS_SYSTEM),
-            HumanMessage(content=self.prompts.recommendations_user(state.query, company_data))
-        ]
-
-        response = self.llm.invoke(messages)
-        return {"analysis": response.content}
-
-    def run(self, query: str) -> ResearchState:
-        initial_state = ResearchState(query=query)
+    def run(self, company_url: str) -> AgentState:
+        initial_state = AgentState(company_url=company_url)
         final_state = self.workflow.invoke(initial_state)
-        return ResearchState(**final_state)
+        return final_state
