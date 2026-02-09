@@ -1,8 +1,8 @@
 # Timeline — Multi-Agent Competitive Analysis System
 
-## Current Status: Day 1 COMPLETE
+## Current Status: Day 2 COMPLETE
 
-**Last updated:** 2026-02-09
+**Last updated:** 2026-02-10
 **Branch:** `main`
 **Remote:** https://github.com/sagar11051/competitor_analysis.git (pending push — fix auth)
 
@@ -34,17 +34,24 @@
 
 ---
 
-### Day 2 — State Schema + Agent Skeletons [PENDING]
+### Day 2 — State Schema + Agent Skeletons [DONE]
 
-**What to build:**
-- `src/agents/__init__.py`
-- `src/agents/state.py` — `AgentState(TypedDict)` with: `messages`, `session_id`, `user_profile`, `research_tasks`, `research_results`, `strategy_drafts`, `approval_status`, `company_url`, `company_profile`, `competitors`, `competitor_analyses`, `strategic_insights`
-- `src/agents/planner.py` — Planner subgraph (2 nodes: `analyze_query`, `create_research_tasks`)
-- `src/agents/researcher.py` — Research Orchestrator subgraph (3 nodes: `dispatch_research`, `research_agent`, `aggregate_results`)
-- `src/agents/strategist.py` — Strategy Builder subgraph (2 nodes: `analyze_findings`, `generate_strategy`)
-- `tests/test_state.py` + `tests/test_agent_skeletons.py`
+**What was delivered:**
+- `src/agents/__init__.py` — Package init
+- `src/agents/state.py` — `AgentState(TypedDict)` with 12 fields + 7 `APPROVAL_*` status constants
+- `src/agents/planner.py` — Planner subgraph (2 nodes: `analyze_query`, `create_research_tasks`) with `build_planner_subgraph()`
+- `src/agents/researcher.py` — Research Orchestrator subgraph (3 nodes: `dispatch_research`, `research_agent`, `aggregate_results`) with `build_researcher_subgraph()`
+- `src/agents/strategist.py` — Strategy Builder subgraph (2 nodes: `analyze_findings`, `generate_strategy`) with `build_strategist_subgraph()`
+- `tests/test_state.py` — 4 tests (instantiation, populated data, constants, annotations)
+- `tests/test_agent_skeletons.py` — 13 tests (node functions + subgraph compile/run for all 3 agents)
+- Upgraded `langgraph` 0.5.0 → 1.0.1 (fixed MRO bug with Python 3.12)
 
-**Target commit:** `day-2: state schema and agent subgraph skeletons`
+**Tests:** `uv run pytest tests/ -v` → 23/24 passed (1 pre-existing failure in `test_ovhllm_is_configured` — caused by real OVH creds in `.env` overriding empty-string test params)
+
+**Key notes:**
+- All 3 subgraphs return uncompiled `StateGraph` from their `build_*_subgraph()` functions — the main graph (Day 4) will compose and compile them
+- Nodes have skeleton logic with TODO markers for Day 3 (tools) and Day 6 (LLM)
+- Each subgraph correctly sets `approval_status` at its terminal node for HITL gating
 
 ---
 
@@ -131,12 +138,12 @@ competetive_analysis/
 │   ├── utils/
 │   │   ├── __init__.py           ✅ Day 1
 │   │   └── logger.py             ✅ Day 1
-│   ├── agents/                   📋 Day 2-7
-│   │   ├── __init__.py           📋 Day 2
-│   │   ├── state.py              📋 Day 2
-│   │   ├── planner.py            📋 Day 2
-│   │   ├── researcher.py         📋 Day 2
-│   │   ├── strategist.py         📋 Day 2
+│   ├── agents/                   ✅ Day 2 (skeletons)
+│   │   ├── __init__.py           ✅ Day 2
+│   │   ├── state.py              ✅ Day 2
+│   │   ├── planner.py            ✅ Day 2
+│   │   ├── researcher.py         ✅ Day 2
+│   │   ├── strategist.py         ✅ Day 2
 │   │   ├── graph.py              📋 Day 4
 │   │   ├── prompts.py            📋 Day 3
 │   │   ├── llm.py                📋 Day 6
@@ -152,8 +159,8 @@ competetive_analysis/
 │   ├── __init__.py               ✅ Day 1
 │   ├── test_config.py            ✅ Day 1 (3 tests)
 │   ├── test_ovhllm.py            ✅ Day 1 (4 tests)
-│   ├── test_state.py             📋 Day 2
-│   ├── test_agent_skeletons.py   📋 Day 2
+│   ├── test_state.py             ✅ Day 2 (4 tests)
+│   ├── test_agent_skeletons.py   ✅ Day 2 (13 tests)
 │   ├── test_tools.py             📋 Day 3
 │   ├── test_researcher.py        📋 Day 3
 │   ├── test_graph.py             📋 Day 4
@@ -186,4 +193,8 @@ competetive_analysis/
 - **LLM client:** `ovhllm.py` provides `OVHLLM` class and `get_chat_model()` → returns `ChatOpenAI` for LangGraph
 - **Settings:** `from src.config.settings import settings` — loads from `.env`
 - **Full PRD:** See `docs/PRD.md` for architecture, state schema, HITL design, and API specs
-- **Git remote:** `origin` is set to `https://github.com/sagar11051/competitor_analysis.git` — needs auth fix before pushing (permission denied as `sagar-avecu`, repo owned by `sagar11051`)
+- **State schema:** `from src.agents.state import AgentState` — TypedDict with 12 fields
+- **Subgraph builders:** `build_planner_subgraph()`, `build_researcher_subgraph()`, `build_strategist_subgraph()` — each returns uncompiled `StateGraph`
+- **LangGraph version:** 1.0.1 (upgraded from 0.5.0 to fix Python 3.12 MRO bug)
+- **Known test issue:** `test_ovhllm_is_configured` fails when real OVH creds are in `.env` (empty-string params fall through to settings)
+- **Git remote:** `origin` is set to `https://github.com/sagar11051/competitor_analysis.git` — needs auth fix before pushing
