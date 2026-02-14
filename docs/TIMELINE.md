@@ -1,8 +1,8 @@
 # Timeline — Multi-Agent Competitive Analysis System
 
-## Current Status: Day 2 COMPLETE
+## Current Status: Day 4 COMPLETE
 
-**Last updated:** 2026-02-10
+**Last updated:** 2026-02-14
 **Branch:** `main`
 **Remote:** https://github.com/sagar11051/competitor_analysis.git (pending push — fix auth)
 
@@ -55,29 +55,41 @@
 
 ---
 
-### Day 3 — Tools Integration (Tavily + Crawl4AI) [PENDING]
+### Day 3 — Tools Integration (Tavily + Crawl4AI) [DONE]
 
-**What to build:**
-- `src/tools/tavily_search.py` — LangChain Tavily tool wrapper
-- `src/tools/web_scraper.py` — Crawl4AI scraping tool
-- Implement `research_agent` node with real tool calls
-- `src/agents/prompts.py` — Prompt templates for all 3 agents
-- `tests/test_tools.py` + `tests/test_researcher.py`
+**What was delivered:**
+- `src/tools/__init__.py` — Package init
+- `src/tools/tavily_search.py` — `TavilySearchTool` class wrapping `tavily-python` with `search()`, `search_competitors()`, `search_company_info()` methods
+- `src/tools/web_scraper.py` — `WebScraperTool` class wrapping Crawl4AI with async `scrape_url()`, `scrape_domain()`, sync wrappers, and `chunk_content()` utility (15KB chunks, 2KB overlap)
+- `src/agents/prompts.py` — Prompt templates for all 3 agents: Planner (analyze_query, create_tasks), Researcher (extract_profile, rank_competitors, summarize_chunk), Strategist (analyze, generate)
+- `src/agents/researcher.py` — Wired real tool calls: `_execute_company_profile` (Crawl4AI), `_execute_competitor_discovery` (Tavily), `_execute_competitor_deep_dive` (Crawl4AI) with task-type routing via `_TASK_EXECUTORS` dict. Added task validation in `dispatch_research` and deduplication in `aggregate_results`
+- `tests/test_tools.py` — 12 tests (Tavily configured/unconfigured, search calls, domain filters; Crawl4AI scrape success/failure; chunk_content edge cases)
+- `tests/test_researcher.py` — 13 tests (dispatch validation, executor functions with mocks, subgraph end-to-end)
 
-**Target commit:** `day-3: Tavily and Crawl4AI tools integration`
+**Tests:** `uv run pytest tests/ -v` → 48/49 passed (1 pre-existing `test_ovhllm_is_configured` failure)
 
 ---
 
-### Day 4 — Main Graph + Human-in-the-Loop [PENDING]
+### Day 4 — Main Graph + Human-in-the-Loop [DONE]
 
-**What to build:**
-- `src/agents/graph.py` — Main graph composing 3 subgraphs with `interrupt_before` at 3 HITL gates
-- Conditional edge routing based on `approval_status`
-- `MemorySaver` checkpointer
-- Update `src/app.py` — Session-based API endpoints (`POST /sessions`, `POST /sessions/{id}/message`, `GET /sessions/{id}/state`)
-- `tests/test_graph.py` + `tests/test_hitl.py`
+**What was delivered:**
+- `src/agents/graph.py` — Main graph composing 3 subgraphs with HITL gate nodes (`hitl_gate_1`, `hitl_gate_2`, `hitl_gate_3`), `interrupt_before` for pause points, conditional edge routing based on `approval_status`, and `MemorySaver` checkpointer
+- `src/app.py` — Session-based API endpoints:
+  - `POST /sessions` — Create new analysis session, runs until first HITL gate
+  - `POST /sessions/{id}/message` — Send approval/modify/reject, resumes graph execution
+  - `GET /sessions/{id}/state` — Get current session state and progress
+  - Kept legacy `POST /analyze` for backward compatibility
+- `tests/test_graph.py` — 24 tests (initial state, HITL gate nodes, routing functions, approval action resolution, graph building)
+- `tests/test_hitl.py` — 17 tests (session creation, state retrieval, session resumption, full workflow approval, checkpointer persistence)
 
-**Target commit:** `day-4: main graph with human-in-the-loop breakpoints`
+**Tests:** `uv run pytest tests/ -v` → 89/90 passed (1 pre-existing `test_ovhllm_is_configured` failure)
+
+**Key features:**
+- Graph interrupts before each HITL gate node, allowing users to approve/modify/reject
+- `create_session()` starts a new session and runs planner until `pending_plan_approval`
+- `resume_session()` updates approval_status and continues execution to next interrupt
+- `get_session_state()` retrieves current state for any session
+- Conditional routing allows revision loops back to earlier stages on "modify"/"reject"
 
 ---
 
@@ -127,7 +139,7 @@ competetive_analysis/
 │   └── TIMELINE.md               ✅ Day 1
 ├── src/
 │   ├── __init__.py               ✅ existing
-│   ├── app.py                    ✅ existing (modify Day 4)
+│   ├── app.py                    ✅ Day 4 (session API added)
 │   ├── models.py                 ✅ existing (kept)
 │   ├── prompts.py                ✅ existing (kept)
 │   ├── workflow.py               ✅ existing (kept)
@@ -144,14 +156,14 @@ competetive_analysis/
 │   │   ├── planner.py            ✅ Day 2
 │   │   ├── researcher.py         ✅ Day 2
 │   │   ├── strategist.py         ✅ Day 2
-│   │   ├── graph.py              📋 Day 4
-│   │   ├── prompts.py            📋 Day 3
+│   │   ├── graph.py              ✅ Day 4
+│   │   ├── prompts.py            ✅ Day 3
 │   │   ├── llm.py                📋 Day 6
 │   │   └── cli.py                📋 Day 7
-│   ├── tools/                    📋 Day 3
-│   │   ├── __init__.py           📋 Day 3
-│   │   ├── tavily_search.py      📋 Day 3
-│   │   └── web_scraper.py        📋 Day 3
+│   ├── tools/                    ✅ Day 3
+│   │   ├── __init__.py           ✅ Day 3
+│   │   ├── tavily_search.py      ✅ Day 3
+│   │   └── web_scraper.py        ✅ Day 3
 │   └── memory/                   📋 Day 5
 │       ├── __init__.py           📋 Day 5
 │       └── store.py              📋 Day 5
@@ -161,10 +173,10 @@ competetive_analysis/
 │   ├── test_ovhllm.py            ✅ Day 1 (4 tests)
 │   ├── test_state.py             ✅ Day 2 (4 tests)
 │   ├── test_agent_skeletons.py   ✅ Day 2 (13 tests)
-│   ├── test_tools.py             📋 Day 3
-│   ├── test_researcher.py        📋 Day 3
-│   ├── test_graph.py             📋 Day 4
-│   ├── test_hitl.py              📋 Day 4
+│   ├── test_tools.py             ✅ Day 3 (12 tests)
+│   ├── test_researcher.py        ✅ Day 3 (13 tests)
+│   ├── test_graph.py             ✅ Day 4
+│   ├── test_hitl.py              ✅ Day 4
 │   ├── test_memory.py            📋 Day 5
 │   ├── test_llm_integration.py   📋 Day 6
 │   ├── test_e2e.py               📋 Day 6
