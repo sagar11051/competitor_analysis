@@ -1,10 +1,10 @@
 # Timeline — Multi-Agent Competitive Analysis System
 
-## Current Status: Day 4 COMPLETE
+## Current Status: Day 5 COMPLETE
 
 **Last updated:** 2026-02-14
 **Branch:** `main`
-**Remote:** https://github.com/sagar11051/competitor_analysis.git (pending push — fix auth)
+**Remote:** https://github.com/sagar11051/competitor_analysis.git
 
 ---
 
@@ -93,14 +93,35 @@
 
 ---
 
-### Day 5 — Memory Layer (LangGraph Store) [PENDING]
+### Day 5 — Memory Layer (LangGraph Store) [DONE]
 
-**What to build:**
-- `src/memory/store.py` — `InMemoryStore` with namespaces: `("users", user_id)`, `("sessions", session_id)`, `("competitors", name)`
-- Wire memory into all 3 agents (read past knowledge, write new findings)
-- `tests/test_memory.py`
+**What was delivered:**
+- `src/memory/__init__.py` — Package init with exports
+- `src/memory/store.py` — `MemoryStore` class wrapping `InMemoryStore` with domain-specific methods:
+  - `get_user_profile()` / `put_user_profile()` — User context (role, company, industry)
+  - `get_user_preferences()` / `put_user_preferences()` — Analysis preferences (focus areas, depth)
+  - `get_session_summary()` / `put_session_summary()` — Session memory (query, findings, decisions)
+  - `get_competitor_profile()` / `put_competitor_profile()` — Cached competitor data
+  - `search_competitors()` — Query-based competitor lookup
+  - `get_memory_store()` — Singleton accessor
+- `src/agents/graph.py` — Wired `store=memory_store.raw_store` into `graph.compile()`
+- `src/agents/planner.py` — `analyze_query()` reads user prefs + cached competitors; `create_research_tasks()` writes plan to session memory
+- `src/agents/researcher.py` — `research_agent()` checks competitor cache before scraping, caches new results
+- `src/agents/strategist.py` — `analyze_findings()` reads historical analyses; `generate_strategy()` writes session summary
+- `tests/test_memory.py` — 28 tests (unit tests for all methods, namespace isolation, singleton, graph integration)
+- `README.md` — Updated with architecture diagram, tech stack, and dev progress timeline
 
-**Target commit:** `day-5: LangGraph Store memory layer`
+**Tests:** `uv run pytest tests/ -v` → 117/118 passed (1 pre-existing `test_ovhllm_is_configured` failure)
+
+**Namespace schema:**
+| Namespace | Key | Value | Purpose |
+|-----------|-----|-------|---------|
+| `("users", user_id)` | `"profile"` | `{role, company, industry}` | User context |
+| `("users", user_id)` | `"preferences"` | `{focus_areas, depth, format}` | User preferences |
+| `("sessions", session_id)` | `"summary"` | `{query, key_findings, decisions}` | Session memory |
+| `("competitors", name)` | `"profile"` | `{website, model, market, ...}` | Cached competitor data |
+
+**Commit:** `064ae36` — `day-5: LangGraph Store memory layer`
 
 ---
 
@@ -164,9 +185,9 @@ competetive_analysis/
 │   │   ├── __init__.py           ✅ Day 3
 │   │   ├── tavily_search.py      ✅ Day 3
 │   │   └── web_scraper.py        ✅ Day 3
-│   └── memory/                   📋 Day 5
-│       ├── __init__.py           📋 Day 5
-│       └── store.py              📋 Day 5
+│   └── memory/                   ✅ Day 5
+│       ├── __init__.py           ✅ Day 5
+│       └── store.py              ✅ Day 5
 ├── tests/
 │   ├── __init__.py               ✅ Day 1
 │   ├── test_config.py            ✅ Day 1 (3 tests)
@@ -177,7 +198,7 @@ competetive_analysis/
 │   ├── test_researcher.py        ✅ Day 3 (13 tests)
 │   ├── test_graph.py             ✅ Day 4
 │   ├── test_hitl.py              ✅ Day 4
-│   ├── test_memory.py            📋 Day 5
+│   ├── test_memory.py            ✅ Day 5 (28 tests)
 │   ├── test_llm_integration.py   📋 Day 6
 │   ├── test_e2e.py               📋 Day 6
 │   └── test_integration.py       📋 Day 7
@@ -209,4 +230,5 @@ competetive_analysis/
 - **Subgraph builders:** `build_planner_subgraph()`, `build_researcher_subgraph()`, `build_strategist_subgraph()` — each returns uncompiled `StateGraph`
 - **LangGraph version:** 1.0.1 (upgraded from 0.5.0 to fix Python 3.12 MRO bug)
 - **Known test issue:** `test_ovhllm_is_configured` fails when real OVH creds are in `.env` (empty-string params fall through to settings)
-- **Git remote:** `origin` is set to `https://github.com/sagar11051/competitor_analysis.git` — needs auth fix before pushing
+- **Memory store:** `from src.memory import get_memory_store` — returns singleton `MemoryStore` wrapping `InMemoryStore`
+- **Git remote:** `origin` is set to `https://github.com/sagar11051/competitor_analysis.git`
