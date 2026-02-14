@@ -69,4 +69,93 @@ Run the tool and enter a company website URL when prompted. The tool will output
 
 ---
 
+## Project Architecture
+
+This project uses a **LangGraph-powered multi-agent system** with sophisticated workflow management:
+
+### Agent Pipeline
+```
+┌─────────────┐     ┌──────────────┐     ┌─────────────┐
+│   Planner   │────▶│  Researcher  │────▶│  Strategist │
+│   Agent     │     │    Agent     │     │    Agent    │
+└─────────────┘     └──────────────┘     └─────────────┘
+       │                   │                    │
+       ▼                   ▼                    ▼
+   HITL Gate 1        HITL Gate 2         HITL Gate 3
+   (Plan Approval)   (Research Approval)  (Strategy Approval)
+```
+
+### Core Features
+
+#### Human-in-the-Loop (HITL) Workflow
+- **3 approval gates** for plan, research, and strategy phases
+- Users can approve, modify, or reject at each stage
+- Revision loops allow iterating on any phase
+
+#### Persistent Memory Layer (Day 5)
+Cross-session memory using LangGraph's `InMemoryStore`:
+
+| Namespace | Purpose |
+|-----------|---------|
+| `users/{id}/profile` | User context (role, company, industry) |
+| `users/{id}/preferences` | Analysis preferences (focus areas, depth) |
+| `sessions/{id}/summary` | Session memory (query, findings, decisions) |
+| `competitors/{name}/profile` | Cached competitor data for faster lookups |
+
+#### Tool Integration
+- **Tavily Search** - AI-powered web search for competitor discovery
+- **Crawl4AI** - Async web scraping with intelligent content chunking
+- **Google Gemini 1.5 Flash** - LLM for analysis and synthesis
+
+### Tech Stack
+- **Python 3.12+**
+- **LangGraph** - Multi-agent orchestration with state management
+- **LangChain** - LLM integration and tool abstraction
+- **FastAPI** - REST API server
+- **Pydantic** - Data validation and serialization
+- **Firecrawl** - Web scraping service
+
+---
+
+## Development Progress
+
+| Day | Milestone | Description |
+|-----|-----------|-------------|
+| 1 | Foundation | Project setup, config, logger, dependencies |
+| 2 | State Schema | AgentState TypedDict, agent subgraph skeletons |
+| 3 | Tools | Tavily Search + Crawl4AI integration |
+| 4 | HITL Workflow | Main graph with human-in-the-loop breakpoints |
+| 5 | Memory Layer | LangGraph Store for cross-session persistence |
+
+---
+
+## Quick Start
+
+```bash
+# Install dependencies
+uv sync
+
+# Set environment variables
+cp .env.example .env
+# Edit .env with your API keys
+
+# Run CLI (interactive mode)
+uv run python main.py
+
+# Run API server
+uv run uvicorn src.app:app --host 0.0.0.0 --port 5000 --reload
+```
+
+## Running Tests
+
+```bash
+# Run all tests
+uv run pytest tests/ -v
+
+# Run specific test file
+uv run pytest tests/test_memory.py -v
+```
+
+---
+
 For more details, see the `src/models.py` file for the full data structure and field definitions.

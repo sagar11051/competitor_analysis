@@ -7,10 +7,13 @@ Nodes:
 
 The subgraph sets approval_status to "pending_research_approval" so the main
 graph can interrupt for HITL Gate 2.
+
+Day 5: Added memory store integration for competitor caching.
 """
 
 import asyncio
 from datetime import datetime, timezone
+from typing import Optional
 
 from langchain_core.messages import AIMessage
 from langgraph.graph import END, StateGraph
@@ -21,6 +24,19 @@ from src.tools.web_scraper import WebScraperTool, chunk_content
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+def _get_store_from_context():
+    """Get MemoryStore from LangGraph runtime context if available."""
+    try:
+        from langgraph.store.base import get_store
+        from src.memory.store import MemoryStore
+        raw_store = get_store()
+        if raw_store is not None:
+            return MemoryStore(raw_store)
+    except (ImportError, RuntimeError):
+        pass
+    return None
 
 # Module-level tool instances (reused across invocations)
 _tavily = TavilySearchTool()
@@ -209,6 +225,7 @@ def research_agent(state: AgentState) -> dict:
     Writes: research_results, messages
 
     Routes each task to the appropriate executor based on task type.
+    Checks competitor cache before scraping and caches new results.
     TODO (Day 6): Add LLM-driven result extraction and summarization.
     """
     logger.info("Researcher: executing research tasks")
@@ -216,13 +233,41 @@ def research_agent(state: AgentState) -> dict:
     tasks = state.get("research_tasks", [])
     results = []
 
+    # Try to get the memory store for caching
+    store = _get_store_from_context()
+    cache_hits = 0
+    cache_writes = 0
+
     for task in tasks:
         task_type = task.get("type", "")
+        target = task.get("target", "unknown")
+
+        # Check cache for competitor deep dive tasks
+        if store and task_type == "competitor_deep_dive":
+            cached = store.get_competitor_profile(target)
+            if cached and "data" in cached:
+                logger.info(f"Cache hit for competitor: {target}")
+                cache_hits += 1
+                results.append({
+                    "competitor": target,
+                    "data": cached["data"],
+                    "source": "cache",
+                    "timestamp": cached.get("timestamp", datetime.now(timezone.utc).isoformat()),
+                })
+                continue
+
         executor = _TASK_EXECUTORS.get(task_type)
 
         if executor:
-            logger.info(f"Executing task: {task_type} → {task.get('target', '?')}")
+            logger.info(f"Executing task: {task_type} → {target}")
             result = executor(task)
+
+            # Cache competitor results for future use
+            if store and task_type in ("competitor_deep_dive", "company_profile"):
+                if "error" not in result.get("data", {}):
+                    store.put_competitor_profile(target, result)
+                    cache_writes += 1
+                    logger.info(f"Cached result for: {target}")
         else:
             logger.warning(f"Unknown task type: {task_type}")
             result = {
@@ -233,10 +278,12 @@ def research_agent(state: AgentState) -> dict:
             }
         results.append(result)
 
+    logger.info(f"Researcher: {cache_hits} cache hits, {cache_writes} cache writes")
+
     return {
         "research_results": results,
         "messages": [
-            AIMessage(content=f"Completed {len(results)} research tasks.")
+            AIMessage(content=f"Completed {len(results)} research tasks ({cache_hits} from cache).")
         ],
     }
 

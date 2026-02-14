@@ -5,8 +5,9 @@ This module builds the top-level StateGraph that:
 2. Implements 3 human-in-the-loop gates via interrupt_before
 3. Routes based on approval_status for approve/revise flows
 4. Uses MemorySaver for checkpointing
+5. Uses InMemoryStore for cross-session memory
 
-Day 4 implementation.
+Day 4 + Day 5 implementation.
 """
 
 from typing import Literal
@@ -29,12 +30,16 @@ from src.agents.state import (
     AgentState,
 )
 from src.agents.strategist import build_strategist_subgraph
+from src.memory import get_memory_store
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 # Module-level checkpointer (shared across sessions)
 checkpointer = MemorySaver()
+
+# Module-level memory store (shared across sessions)
+memory_store = get_memory_store()
 
 
 def _get_initial_state(
@@ -241,16 +246,18 @@ def build_main_graph() -> StateGraph:
 
 
 def get_compiled_graph():
-    """Get a compiled graph with checkpointer and HITL interrupts configured.
+    """Get a compiled graph with checkpointer, store, and HITL interrupts configured.
 
     Returns a runnable CompiledStateGraph that:
     - Interrupts before each HITL gate node for human approval
     - Uses MemorySaver for state checkpointing
+    - Uses InMemoryStore for cross-session memory
     """
     graph = build_main_graph()
 
     return graph.compile(
         checkpointer=checkpointer,
+        store=memory_store.raw_store,
         interrupt_before=["hitl_gate_1", "hitl_gate_2", "hitl_gate_3"],
     )
 
