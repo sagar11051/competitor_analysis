@@ -14,3 +14,9 @@ wheels/
 context.md
 1.ipynb
 src/1.ipynb
+
+# Windows reserved device name (created by some tools redirecting output)
+nul
+
+# LangGraph / agent outputs
+competitor_analysis/

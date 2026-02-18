@@ -7,15 +7,22 @@ Nodes:
 The subgraph sets approval_status to "pending_plan_approval" so the main graph
 can interrupt for HITL Gate 1.
 
-Skeleton implementation — real LLM logic added on Day 6.
 Day 5: Added memory store integration for user preferences and known competitors.
+Day 6: Added LLM integration for intent extraction and task generation.
 """
 
-from typing import Optional
+import json
+from typing import Any, Optional
 
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.graph import END, StateGraph
 
+from src.agents.llm import generate_json, is_llm_configured, parse_json_response
+from src.agents.prompts import (
+    PLANNER_ANALYZE_QUERY,
+    PLANNER_CREATE_TASKS,
+    PLANNER_SYSTEM,
+)
 from src.agents.state import APPROVAL_PENDING_PLAN, AgentState
 from src.utils.logger import get_logger
 
@@ -35,20 +42,78 @@ def _get_store_from_context():
     return None
 
 
+def _extract_user_message(messages: list) -> str:
+    """Extract the latest user message text from the messages list."""
+    for msg in reversed(messages):
+        if isinstance(msg, HumanMessage):
+            return msg.content
+        if isinstance(msg, dict) and msg.get("role") == "user":
+            return msg.get("content", "")
+    return ""
+
+
+def _extract_intent_with_llm(
+    user_message: str,
+    company_url: str,
+) -> dict[str, Any]:
+    """Use LLM to extract structured intent from user message.
+
+    Returns:
+        Dict with company_url, company_name, focus_areas, constraints
+    """
+    prompt = PLANNER_ANALYZE_QUERY.format(
+        user_message=user_message,
+        company_url=company_url,
+    )
+
+    try:
+        result = generate_json(prompt=prompt, system_prompt=PLANNER_SYSTEM)
+        logger.info(f"LLM extracted intent: {list(result.keys())}")
+        return result
+    except Exception as e:
+        logger.warning(f"LLM intent extraction failed: {e}, using defaults")
+        # Fallback to basic extraction
+        return {
+            "company_url": company_url,
+            "company_name": _infer_company_name(company_url),
+            "focus_areas": ["overview", "products", "pricing", "competitors"],
+            "constraints": [],
+        }
+
+
+def _infer_company_name(url: str) -> str:
+    """Infer company name from URL."""
+    if not url:
+        return "Unknown"
+    # Extract domain and clean it
+    domain = url.replace("https://", "").replace("http://", "").split("/")[0]
+    domain = domain.replace("www.", "")
+    # Get the main part (before .com, etc.)
+    name = domain.split(".")[0]
+    return name.title()
+
+
 def analyze_query(state: AgentState) -> dict:
     """Parse the latest user message to extract intent.
 
     Reads: messages, company_url, user_profile
-    Writes: company_url (confirmed/extracted), user_profile (enriched from memory)
+    Writes: company_url (confirmed/extracted), user_profile (enriched from memory),
+            competitors (from cache)
 
-    Also reads user preferences and known competitors from store if available.
-    TODO (Day 6): LLM call to extract intent from user message + memory context.
+    Uses LLM to extract structured intent from the user message including
+    company URL, name, focus areas, and constraints.
     """
     logger.info("Planner: analyzing user query")
 
-    # Skeleton: pass through the company_url already in state
+    # Get initial state
     company_url = state.get("company_url", "")
     user_profile = dict(state.get("user_profile", {}))
+    messages = state.get("messages", [])
+
+    # Extract the user message
+    user_message = _extract_user_message(messages)
+    if not user_message and company_url:
+        user_message = f"Analyze competitors for {company_url}"
 
     # Try to read user preferences and enrich profile from memory store
     store = _get_store_from_context()
@@ -74,43 +139,88 @@ def analyze_query(state: AgentState) -> dict:
 
         # Search for known competitors in memory cache
         if company_url:
-            # Extract domain for search
             domain = company_url.replace("https://", "").replace("http://", "").split("/")[0]
             known_competitors = store.search_competitors(domain, limit=5)
             if known_competitors:
                 logger.info(f"Planner: found {len(known_competitors)} cached competitors")
 
+    # Use LLM to extract intent if configured
+    if is_llm_configured():
+        intent = _extract_intent_with_llm(user_message, company_url)
+        # Update company_url if LLM found a better one
+        if intent.get("company_url"):
+            company_url = intent["company_url"]
+        # Store extracted intent in user_profile for create_research_tasks
+        user_profile["extracted_intent"] = intent
+    else:
+        logger.warning("LLM not configured, using basic intent extraction")
+        user_profile["extracted_intent"] = {
+            "company_url": company_url,
+            "company_name": _infer_company_name(company_url),
+            "focus_areas": ["overview", "products", "pricing", "competitors"],
+            "constraints": [],
+        }
+
+    company_name = user_profile["extracted_intent"].get("company_name", "the company")
+
     return {
         "company_url": company_url,
         "user_profile": user_profile,
-        "competitors": known_competitors,  # Pre-populate from cache
+        "competitors": known_competitors,
         "messages": [
-            AIMessage(content=f"Analyzing competitive landscape for {company_url}...")
+            AIMessage(content=f"Analyzing competitive landscape for {company_name} ({company_url})...")
         ],
     }
 
 
-def create_research_tasks(state: AgentState) -> dict:
-    """Generate research tasks from the parsed intent.
+def _generate_tasks_with_llm(
+    company_name: str,
+    company_url: str,
+    focus_areas: list[str],
+    constraints: list[str],
+) -> list[dict[str, Any]]:
+    """Use LLM to generate research tasks.
 
-    Reads: company_url, user_profile
-    Writes: research_tasks, approval_status
-
-    Also writes the research plan to session memory for later reference.
-    TODO (Day 6): LLM call to generate a detailed research plan.
+    Returns:
+        List of task dicts with type, target, url, focus_areas
     """
-    logger.info("Planner: creating research tasks")
+    prompt = PLANNER_CREATE_TASKS.format(
+        company_name=company_name,
+        company_url=company_url,
+        focus_areas=json.dumps(focus_areas),
+        constraints=json.dumps(constraints),
+    )
 
-    company_url = state.get("company_url", "")
-    session_id = state.get("session_id", "")
-    user_profile = state.get("user_profile", {})
+    try:
+        result = generate_json(prompt=prompt, system_prompt=PLANNER_SYSTEM)
+        tasks = result.get("tasks", [])
+        logger.info(f"LLM generated {len(tasks)} research tasks")
 
-    # Get focus areas from user preferences if available
-    prefs = user_profile.get("preferences", {})
-    focus_areas = prefs.get("focus_areas", ["overview", "products", "pricing", "team"])
+        # Validate and normalize tasks
+        valid_types = {"company_profile", "competitor_discovery", "competitor_deep_dive"}
+        validated_tasks = []
+        for task in tasks:
+            task_type = task.get("type", "")
+            if task_type not in valid_types:
+                logger.warning(f"Skipping invalid task type: {task_type}")
+                continue
+            validated_tasks.append({
+                "type": task_type,
+                "target": task.get("target", ""),
+                "url": task.get("url"),
+                "focus_areas": task.get("focus_areas", focus_areas),
+            })
 
-    # Skeleton: create a default research plan
-    tasks = [
+        return validated_tasks if validated_tasks else _default_tasks(company_url, focus_areas)
+
+    except Exception as e:
+        logger.warning(f"LLM task generation failed: {e}, using defaults")
+        return _default_tasks(company_url, focus_areas)
+
+
+def _default_tasks(company_url: str, focus_areas: list[str]) -> list[dict[str, Any]]:
+    """Generate default research tasks as fallback."""
+    return [
         {
             "type": "company_profile",
             "target": company_url,
@@ -125,17 +235,67 @@ def create_research_tasks(state: AgentState) -> dict:
         },
     ]
 
+
+def create_research_tasks(state: AgentState) -> dict:
+    """Generate research tasks from the parsed intent.
+
+    Reads: company_url, user_profile, session_id
+    Writes: research_tasks, approval_status
+
+    Uses LLM to generate a detailed research plan based on extracted intent.
+    """
+    logger.info("Planner: creating research tasks")
+
+    company_url = state.get("company_url", "")
+    session_id = state.get("session_id", "")
+    user_profile = state.get("user_profile", {})
+
+    # Get extracted intent from analyze_query
+    intent = user_profile.get("extracted_intent", {})
+    company_name = intent.get("company_name", _infer_company_name(company_url))
+    focus_areas = intent.get("focus_areas", ["overview", "products", "pricing", "competitors"])
+    constraints = intent.get("constraints", [])
+
+    # Also check user preferences for additional focus areas
+    prefs = user_profile.get("preferences", {})
+    pref_focus = prefs.get("focus_areas", [])
+    if pref_focus:
+        # Merge preference focus areas (avoiding duplicates)
+        focus_areas = list(dict.fromkeys(focus_areas + pref_focus))
+
+    # Generate tasks with LLM if configured
+    if is_llm_configured():
+        tasks = _generate_tasks_with_llm(
+            company_name=company_name,
+            company_url=company_url,
+            focus_areas=focus_areas,
+            constraints=constraints,
+        )
+    else:
+        logger.warning("LLM not configured, using default tasks")
+        tasks = _default_tasks(company_url, focus_areas)
+
     # Write research plan to session memory
     store = _get_store_from_context()
     if store and session_id:
         session_summary = {
             "query": company_url,
+            "company_name": company_name,
             "phase": "planning",
             "task_count": len(tasks),
             "focus_areas": focus_areas,
+            "constraints": constraints,
         }
         store.put_session_summary(session_id, session_summary)
         logger.info(f"Planner: saved research plan to session memory")
+
+    # Build task summary for user message
+    task_summary = []
+    for task in tasks:
+        task_type = task.get("type", "unknown")
+        target = task.get("target", "")
+        task_summary.append(f"• {task_type}: {target}")
+    task_list = "\n".join(task_summary)
 
     return {
         "research_tasks": tasks,
@@ -143,8 +303,9 @@ def create_research_tasks(state: AgentState) -> dict:
         "messages": [
             AIMessage(
                 content=(
-                    f"Research plan created with {len(tasks)} tasks. "
-                    "Awaiting your approval to proceed."
+                    f"Research plan created with {len(tasks)} tasks:\n\n"
+                    f"{task_list}\n\n"
+                    "Awaiting your approval to proceed with research."
                 )
             )
         ],

@@ -105,15 +105,15 @@ Cross-session memory using LangGraph's `InMemoryStore`:
 #### Tool Integration
 - **Tavily Search** - AI-powered web search for competitor discovery
 - **Crawl4AI** - Async web scraping with intelligent content chunking
-- **Google Gemini 1.5 Flash** - LLM for analysis and synthesis
+- **OVH LLM (Mistral-Nemo)** - OpenAI-compatible LLM for analysis and synthesis
 
 ### Tech Stack
 - **Python 3.12+**
-- **LangGraph** - Multi-agent orchestration with state management
+- **LangGraph 1.0+** - Multi-agent orchestration with state management
 - **LangChain** - LLM integration and tool abstraction
 - **FastAPI** - REST API server
 - **Pydantic** - Data validation and serialization
-- **Firecrawl** - Web scraping service
+- **LangGraph Studio** - Visual graph inspector (`langgraph.json`)
 
 ---
 
@@ -126,6 +126,8 @@ Cross-session memory using LangGraph's `InMemoryStore`:
 | 3 | Tools | Tavily Search + Crawl4AI integration |
 | 4 | HITL Workflow | Main graph with human-in-the-loop breakpoints |
 | 5 | Memory Layer | LangGraph Store for cross-session persistence |
+| 6 | LLM Integration | Full Planner + Strategist logic via OVH LLM |
+| 7 | Studio + CLI | LangGraph Studio config, interactive CLI, final tests |
 
 ---
 
@@ -133,17 +135,22 @@ Cross-session memory using LangGraph's `InMemoryStore`:
 
 ```bash
 # Install dependencies
-uv sync
+uv sync --extra dev
 
-# Set environment variables
-cp .env.example .env
-# Edit .env with your API keys
+# Set environment variables in .env
+# OVH_ENDPOINT, OVH_API_KEY, TAVILY_API_KEY, FIRECRAWL_API_KEY
 
-# Run CLI (interactive mode)
-uv run python main.py
+# Run the interactive CLI (recommended)
+uv run python -m src.agents.cli
+
+# Or pass the URL directly
+uv run python -m src.agents.cli --url https://stripe.com
 
 # Run API server
 uv run uvicorn src.app:app --host 0.0.0.0 --port 5000 --reload
+
+# Open LangGraph Studio (requires langgraph CLI)
+langgraph dev
 ```
 
 ## Running Tests

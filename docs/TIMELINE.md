@@ -1,8 +1,8 @@
 # Timeline — Multi-Agent Competitive Analysis System
 
-## Current Status: Day 5 COMPLETE
+## Current Status: Day 7 COMPLETE
 
-**Last updated:** 2026-02-14
+**Last updated:** 2026-02-18
 **Branch:** `main`
 **Remote:** https://github.com/sagar11051/competitor_analysis.git
 
@@ -125,29 +125,35 @@
 
 ---
 
-### Day 6 — LLM Integration + Full Agent Logic [PENDING]
+### Day 6 — LLM Integration + Full Agent Logic [DONE]
 
-**What to build:**
-- `src/agents/llm.py` — Helper returning `ChatOpenAI` via `ovhllm.py`'s `get_chat_model()`
-- Full Planner logic (LLM generates research plan from query + memory)
-- Full Strategist logic (LLM synthesizes results into strategies)
-- Refined prompts in `src/agents/prompts.py`
-- `tests/test_llm_integration.py` + `tests/test_e2e.py`
+**What was delivered:**
+- `src/agents/llm.py` — `generate()`, `generate_json()`, `get_chat_model()`, `is_llm_configured()`, `parse_json_response()` — all wired to `ovhllm.py`
+- Full Planner logic: `_extract_intent_with_llm()` → `_generate_tasks_with_llm()` with graceful fallback
+- Full Strategist logic: `_analyze_with_llm()` → `_generate_strategy_with_llm()` with graceful fallback
+- Refined prompts in `src/agents/prompts.py` (PLANNER_*, RESEARCHER_*, STRATEGIST_*)
+- `tests/test_llm_integration.py` — 20 tests (parse_json_response, generate, generate_json, get_chat_model, is_llm_configured)
+- `tests/test_e2e.py` — 10 tests (planner/strategist node + subgraph execution with mocked LLM)
 
-**Target commit:** `day-6: OVH LLM integration and full agent logic`
+**Tests:** `uv run pytest tests/ -v` → 137/138 passed (1 pre-existing `test_ovhllm_is_configured`)
+
+**Commit:** `day-6: OVH LLM integration and full agent logic`
 
 ---
 
-### Day 7 — Studio Compat + CLI + Final Tests [PENDING]
+### Day 7 — Studio Compat + CLI + Final Tests [DONE]
 
-**What to build:**
-- `langgraph.json` — LangGraph Studio config
-- `src/agents/cli.py` — Interactive CLI for chat sessions
-- Update `CLAUDE.md` and `README.md`
-- `tests/test_integration.py` — Full multi-turn conversation test
-- Clean up unused files
+**What was delivered:**
+- `langgraph.json` — LangGraph Studio config pointing to `src/agents/graph.py:get_compiled_graph`
+- `src/agents/cli.py` — Full interactive CLI: URL prompt → Gate 1 (plan) → Gate 2 (research) → Gate 3 (strategy) → final report. Supports `--url` flag.
+- `tests/test_integration.py` — 20 tests: full multi-turn conversation flow (create → approve plan → approve research → approve strategy → complete), modify/revision cycle, CLI helper display tests, CLI loop tests with monkeypatched I/O
+- Updated `CLAUDE.md` — reflects new stack, commands, and module layout
+- Updated `README.md` — added Day 6+7 to progress table, updated Quick Start with CLI commands
+- Deleted `nul` junk file
 
-**Target commit:** `day-7: LangGraph Studio support, CLI, and final integration tests`
+**Tests:** `uv run pytest tests/ -v` → 157/158 passed (1 pre-existing `test_ovhllm_is_configured`)
+
+**Commit:** `day-7: LangGraph Studio support, CLI, and final integration tests`
 
 ---
 
@@ -179,8 +185,8 @@ competetive_analysis/
 │   │   ├── strategist.py         ✅ Day 2
 │   │   ├── graph.py              ✅ Day 4
 │   │   ├── prompts.py            ✅ Day 3
-│   │   ├── llm.py                📋 Day 6
-│   │   └── cli.py                📋 Day 7
+│   │   ├── llm.py                ✅ Day 6
+│   │   └── cli.py                ✅ Day 7
 │   ├── tools/                    ✅ Day 3
 │   │   ├── __init__.py           ✅ Day 3
 │   │   ├── tavily_search.py      ✅ Day 3
@@ -199,14 +205,14 @@ competetive_analysis/
 │   ├── test_graph.py             ✅ Day 4
 │   ├── test_hitl.py              ✅ Day 4
 │   ├── test_memory.py            ✅ Day 5 (28 tests)
-│   ├── test_llm_integration.py   📋 Day 6
-│   ├── test_e2e.py               📋 Day 6
-│   └── test_integration.py       📋 Day 7
+│   ├── test_llm_integration.py   ✅ Day 6
+│   ├── test_e2e.py               ✅ Day 6
+│   └── test_integration.py       ✅ Day 7
 ├── ovhllm.py                     ✅ existing (consumed, not modified)
 ├── main.py                       ✅ existing
 ├── pyproject.toml                ✅ updated Day 1
 ├── uv.lock                       ✅ updated Day 1
-├── langgraph.json                📋 Day 7
+├── langgraph.json                ✅ Day 7
 ├── CLAUDE.md                     ✅ Day 1 (update Day 7)
 ├── README.md                     ✅ existing (update Day 7)
 ├── .env                          ✅ updated Day 1 (gitignored)
