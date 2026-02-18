@@ -17,26 +17,15 @@ from typing import Optional
 
 from langchain_core.messages import AIMessage
 from langgraph.graph import END, StateGraph
+from langgraph.store.base import BaseStore
 
 from src.agents.state import APPROVAL_PENDING_RESEARCH, AgentState
+from src.memory.store import MemoryStore
 from src.tools.tavily_search import TavilySearchTool
 from src.tools.web_scraper import WebScraperTool, chunk_content
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
-
-
-def _get_store_from_context():
-    """Get MemoryStore from LangGraph runtime context if available."""
-    try:
-        from langgraph.store.base import get_store
-        from src.memory.store import MemoryStore
-        raw_store = get_store()
-        if raw_store is not None:
-            return MemoryStore(raw_store)
-    except (ImportError, RuntimeError):
-        pass
-    return None
 
 # Module-level tool instances (reused across invocations)
 _tavily = TavilySearchTool()
@@ -218,7 +207,7 @@ _TASK_EXECUTORS = {
 }
 
 
-def research_agent(state: AgentState) -> dict:
+def research_agent(state: AgentState, store: BaseStore = None) -> dict:
     """Execute research tasks using Tavily Search and Crawl4AI.
 
     Reads: research_tasks
@@ -226,15 +215,17 @@ def research_agent(state: AgentState) -> dict:
 
     Routes each task to the appropriate executor based on task type.
     Checks competitor cache before scraping and caches new results.
-    TODO (Day 6): Add LLM-driven result extraction and summarization.
+
+    Args:
+        store: LangGraph-injected BaseStore for cross-session memory (LangGraph 1.0+).
     """
     logger.info("Researcher: executing research tasks")
 
     tasks = state.get("research_tasks", [])
     results = []
 
-    # Try to get the memory store for caching
-    store = _get_store_from_context()
+    # Wrap injected store in our MemoryStore helper
+    memory = MemoryStore(store) if store is not None else None
     cache_hits = 0
     cache_writes = 0
 
@@ -243,8 +234,8 @@ def research_agent(state: AgentState) -> dict:
         target = task.get("target", "unknown")
 
         # Check cache for competitor deep dive tasks
-        if store and task_type == "competitor_deep_dive":
-            cached = store.get_competitor_profile(target)
+        if memory and task_type == "competitor_deep_dive":
+            cached = memory.get_competitor_profile(target)
             if cached and "data" in cached:
                 logger.info(f"Cache hit for competitor: {target}")
                 cache_hits += 1
@@ -263,9 +254,9 @@ def research_agent(state: AgentState) -> dict:
             result = executor(task)
 
             # Cache competitor results for future use
-            if store and task_type in ("competitor_deep_dive", "company_profile"):
+            if memory and task_type in ("competitor_deep_dive", "company_profile"):
                 if "error" not in result.get("data", {}):
-                    store.put_competitor_profile(target, result)
+                    memory.put_competitor_profile(target, result)
                     cache_writes += 1
                     logger.info(f"Cached result for: {target}")
         else:

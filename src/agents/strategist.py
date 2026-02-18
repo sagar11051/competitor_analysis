@@ -16,6 +16,7 @@ from typing import Any, Optional
 
 from langchain_core.messages import AIMessage
 from langgraph.graph import END, StateGraph
+from langgraph.store.base import BaseStore
 
 from src.agents.llm import generate_json, is_llm_configured
 from src.agents.prompts import (
@@ -24,22 +25,10 @@ from src.agents.prompts import (
     STRATEGIST_SYSTEM,
 )
 from src.agents.state import APPROVAL_PENDING_STRATEGY, AgentState
+from src.memory.store import MemoryStore
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
-
-
-def _get_store_from_context():
-    """Get MemoryStore from LangGraph runtime context if available."""
-    try:
-        from langgraph.store.base import get_store
-        from src.memory.store import MemoryStore
-        raw_store = get_store()
-        if raw_store is not None:
-            return MemoryStore(raw_store)
-    except (ImportError, RuntimeError):
-        pass
-    return None
 
 
 def _format_company_profile(profile: Optional[dict]) -> str:
@@ -184,7 +173,7 @@ def _placeholder_analyses(research_results: list[dict]) -> list[dict[str, Any]]:
     return analyses
 
 
-def analyze_findings(state: AgentState) -> dict:
+def analyze_findings(state: AgentState, store: BaseStore = None) -> dict:
     """Cross-reference research results with company profile.
 
     Reads: research_results, company_profile
@@ -192,14 +181,17 @@ def analyze_findings(state: AgentState) -> dict:
 
     Uses LLM to synthesize raw research data into structured competitor analyses
     with strengths, weaknesses, market position, and threat level.
+
+    Args:
+        store: LangGraph-injected BaseStore for cross-session memory (LangGraph 1.0+).
     """
     logger.info("Strategist: analyzing findings")
 
     results = state.get("research_results", [])
     company_profile = state.get("company_profile")
 
-    # Try to get historical analyses from memory store
-    store = _get_store_from_context()
+    # Wrap injected store in our MemoryStore helper
+    memory = MemoryStore(store) if store is not None else None
     historical_count = 0
 
     # Use LLM to analyze if configured
@@ -210,13 +202,13 @@ def analyze_findings(state: AgentState) -> dict:
         analyses = _placeholder_analyses(results)
 
     # Enrich analyses with historical data from memory store
-    if store:
+    if memory:
         for analysis in analyses:
             competitor_name = analysis.get("competitor", "")
             if not competitor_name:
                 continue
 
-            cached_profile = store.get_competitor_profile(competitor_name)
+            cached_profile = memory.get_competitor_profile(competitor_name)
             if cached_profile and "analysis" in cached_profile:
                 historical = cached_profile["analysis"]
                 historical_count += 1
@@ -236,19 +228,19 @@ def analyze_findings(state: AgentState) -> dict:
         logger.info(f"Strategist: enriched {historical_count} analyses with historical data")
 
     # Cache new analyses in memory store
-    if store:
+    if memory:
         for analysis in analyses:
             competitor_name = analysis.get("competitor", "")
             if competitor_name and analysis.get("llm_generated"):
                 # Update competitor profile with new analysis
-                existing = store.get_competitor_profile(competitor_name) or {}
+                existing = memory.get_competitor_profile(competitor_name) or {}
                 existing["analysis"] = {
                     "strengths": analysis.get("strengths", []),
                     "weaknesses": analysis.get("weaknesses", []),
                     "market_position": analysis.get("market_position", "unknown"),
                     "threat_level": analysis.get("threat_level", "medium"),
                 }
-                store.put_competitor_profile(competitor_name, existing)
+                memory.put_competitor_profile(competitor_name, existing)
                 logger.debug(f"Cached analysis for: {competitor_name}")
 
     return {
@@ -321,7 +313,7 @@ def _placeholder_strategy() -> dict[str, Any]:
     }
 
 
-def generate_strategy(state: AgentState) -> dict:
+def generate_strategy(state: AgentState, store: BaseStore = None) -> dict:
     """Generate strategy drafts from the synthesized analysis.
 
     Reads: competitor_analyses, company_profile, session_id, company_url
@@ -329,6 +321,9 @@ def generate_strategy(state: AgentState) -> dict:
 
     Uses LLM to produce detailed strategic recommendations including
     feature gaps, opportunities, positioning suggestions, and executive summary.
+
+    Args:
+        store: LangGraph-injected BaseStore for cross-session memory (LangGraph 1.0+).
     """
     logger.info("Strategist: generating strategy")
 
@@ -394,8 +389,8 @@ def generate_strategy(state: AgentState) -> dict:
         key_findings.append(f"Key opportunity: {strategy['opportunities'][0]}")
 
     # Write session summary to memory
-    store = _get_store_from_context()
-    if store and session_id:
+    memory = MemoryStore(store) if store is not None else None
+    if memory and session_id:
         session_summary = {
             "query": company_url,
             "company_name": company_name,
@@ -406,7 +401,7 @@ def generate_strategy(state: AgentState) -> dict:
             "feature_gaps_count": len(draft.get("feature_gaps", [])),
             "opportunities_count": len(draft.get("opportunities", [])),
         }
-        store.put_session_summary(session_id, session_summary)
+        memory.put_session_summary(session_id, session_summary)
         logger.info(f"Strategist: saved session summary to memory")
 
     # Build user-facing summary

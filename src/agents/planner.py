@@ -16,6 +16,7 @@ from typing import Any, Optional
 
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.graph import END, StateGraph
+from langgraph.store.base import BaseStore
 
 from src.agents.llm import generate_json, is_llm_configured, parse_json_response
 from src.agents.prompts import (
@@ -24,22 +25,10 @@ from src.agents.prompts import (
     PLANNER_SYSTEM,
 )
 from src.agents.state import APPROVAL_PENDING_PLAN, AgentState
+from src.memory.store import MemoryStore
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
-
-
-def _get_store_from_context():
-    """Get MemoryStore from LangGraph runtime context if available."""
-    try:
-        from langgraph.store.base import get_store
-        from src.memory.store import MemoryStore
-        raw_store = get_store()
-        if raw_store is not None:
-            return MemoryStore(raw_store)
-    except (ImportError, RuntimeError):
-        pass
-    return None
 
 
 def _extract_user_message(messages: list) -> str:
@@ -93,7 +82,7 @@ def _infer_company_name(url: str) -> str:
     return name.title()
 
 
-def analyze_query(state: AgentState) -> dict:
+def analyze_query(state: AgentState, store: BaseStore = None) -> dict:
     """Parse the latest user message to extract intent.
 
     Reads: messages, company_url, user_profile
@@ -102,6 +91,9 @@ def analyze_query(state: AgentState) -> dict:
 
     Uses LLM to extract structured intent from the user message including
     company URL, name, focus areas, and constraints.
+
+    Args:
+        store: LangGraph-injected BaseStore for cross-session memory (LangGraph 1.0+).
     """
     logger.info("Planner: analyzing user query")
 
@@ -115,21 +107,21 @@ def analyze_query(state: AgentState) -> dict:
     if not user_message and company_url:
         user_message = f"Analyze competitors for {company_url}"
 
-    # Try to read user preferences and enrich profile from memory store
-    store = _get_store_from_context()
+    # Wrap injected store in our MemoryStore helper
+    memory = MemoryStore(store) if store is not None else None
     known_competitors = []
 
-    if store:
+    if memory:
         user_id = user_profile.get("user_id", "default")
 
         # Read user preferences from memory
-        prefs = store.get_user_preferences(user_id)
+        prefs = memory.get_user_preferences(user_id)
         if prefs:
             logger.info(f"Planner: loaded user preferences from memory: {list(prefs.keys())}")
             user_profile["preferences"] = prefs
 
         # Read stored user profile
-        stored_profile = store.get_user_profile(user_id)
+        stored_profile = memory.get_user_profile(user_id)
         if stored_profile:
             logger.info(f"Planner: loaded user profile from memory")
             # Merge stored profile (don't overwrite existing keys)
@@ -140,7 +132,7 @@ def analyze_query(state: AgentState) -> dict:
         # Search for known competitors in memory cache
         if company_url:
             domain = company_url.replace("https://", "").replace("http://", "").split("/")[0]
-            known_competitors = store.search_competitors(domain, limit=5)
+            known_competitors = memory.search_competitors(domain, limit=5)
             if known_competitors:
                 logger.info(f"Planner: found {len(known_competitors)} cached competitors")
 
@@ -236,13 +228,16 @@ def _default_tasks(company_url: str, focus_areas: list[str]) -> list[dict[str, A
     ]
 
 
-def create_research_tasks(state: AgentState) -> dict:
+def create_research_tasks(state: AgentState, store: BaseStore = None) -> dict:
     """Generate research tasks from the parsed intent.
 
     Reads: company_url, user_profile, session_id
     Writes: research_tasks, approval_status
 
     Uses LLM to generate a detailed research plan based on extracted intent.
+
+    Args:
+        store: LangGraph-injected BaseStore for cross-session memory (LangGraph 1.0+).
     """
     logger.info("Planner: creating research tasks")
 
@@ -276,8 +271,8 @@ def create_research_tasks(state: AgentState) -> dict:
         tasks = _default_tasks(company_url, focus_areas)
 
     # Write research plan to session memory
-    store = _get_store_from_context()
-    if store and session_id:
+    memory = MemoryStore(store) if store is not None else None
+    if memory and session_id:
         session_summary = {
             "query": company_url,
             "company_name": company_name,
@@ -286,7 +281,7 @@ def create_research_tasks(state: AgentState) -> dict:
             "focus_areas": focus_areas,
             "constraints": constraints,
         }
-        store.put_session_summary(session_id, session_summary)
+        memory.put_session_summary(session_id, session_summary)
         logger.info(f"Planner: saved research plan to session memory")
 
     # Build task summary for user message
